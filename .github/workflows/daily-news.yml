@@ -1,0 +1,42 @@
+name: AI Daily News
+
+on:
+  schedule:
+    # 每天早上8点运行 (UTC时间0点)
+    - cron: '0 0 * * *'
+  workflow_dispatch:  # 允许手动触发
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    
+    steps:
+    - uses: actions/checkout@v3
+    
+    - name: Set up Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.10'
+    
+    - name: Install dependencies
+      run: |
+        pip install feedparser requests python-dateutil
+    
+    - name: Pull Ollama model
+      run: |
+        # 使用 GitHub 的 Ollama 或调用 API
+        echo "跳过本地Ollama，使用替代方案"
+    
+    - name: Run news generator
+      env:
+        EMAIL_PASSWORD: ${{ secrets.EMAIL_PASSWORD }}
+        OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+      run: |
+        python daily_news.py
+    
+    - name: Upload report
+      uses: actions/upload-artifact@v3
+      with:
+        name: daily-report
+        path: output/
+        retention-days: 7
