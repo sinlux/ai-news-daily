@@ -18,12 +18,12 @@ EMAIL_SMTP_HOST = "smtp.qq.com"
 EMAIL_SMTP_PORT = 465
 EMAIL_SENDER = "908827397@qq.com"
 EMAIL_PASSWORD = os.getenv("EMAIL_PASSWORD", "")  # 从环境变量读取
-EMAIL_RECEIVER = "908827397@qq.com"
+EMAIL_RECEIVER = "market@sinluxlight.com"
 
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "")  # OpenAI API Key
 USE_OPENAI = bool(OPENAI_API_KEY)
 
-MAX_ARTICLES = 15
+MAX_ARTICLES_PER_CATEGORY = 5  # 每个分类最多5条
 HOURS_BACK = 48
 
 # 新闻源
@@ -126,8 +126,21 @@ class ContentProcessor:
                     article['category'] = cat
                     break
         
-        articles.sort(key=lambda x: x['score'], reverse=True)
-        return articles[:MAX_ARTICLES]
+        # 按分类分组并排序，每个分类取前5条
+        by_category = {}
+        for article in articles:
+            cat = article.get('category', '其他')
+            by_category.setdefault(cat, []).append(article)
+        
+        # 每个分类按热度排序，取前5条
+        result = []
+        for cat in by_category:
+            by_category[cat].sort(key=lambda x: x['score'], reverse=True)
+            result.extend(by_category[cat][:MAX_ARTICLES_PER_CATEGORY])
+        
+        # 整体按分数排序
+        result.sort(key=lambda x: x['score'], reverse=True)
+        return result
 
 
 class Summarizer:
@@ -148,8 +161,8 @@ class Summarizer:
 内容: {content}
 
 输出格式:
-中文标题: [翻译]
-摘要: [1-3句话中文摘要]"""
+中文标题: [翻译后的中文标题]
+摘要: [1-3句话中文摘要，简洁明了]"""
 
             resp = requests.post(
                 "https://api.openai.com/v1/chat/completions",
@@ -196,7 +209,9 @@ class EmailSender:
             msg['To'] = EMAIL_RECEIVER
             msg['Subject'] = subject
             
-            msg.attach(MIMEText(content, 'plain', 'utf-8'))
+            # 转换为HTML格式，支持高亮样式
+            html_content = self._markdown_to_html(content)
+            msg.attach(MIMEText(html_content, 'html', 'utf-8'))
             
             server = smtplib.SMTP_SSL(EMAIL_SMTP_HOST, EMAIL_SMTP_PORT)
             server.login(EMAIL_SENDER, EMAIL_PASSWORD)
@@ -205,6 +220,60 @@ class EmailSender:
             print("✅ 邮件发送成功!")
         except Exception as e:
             print(f"❌ 邮件失败: {e}")
+    
+    def _markdown_to_html(self, md_content):
+        """将Markdown转换为HTML，分类标题加大加粗高亮"""
+        import re
+        
+        lines = md_content.split('\n')
+        html_lines = [
+            '<html><head><meta charset="utf-8"><style>',
+            'body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif; line-height: 1.6; color: #333; max-width: 800px; margin: 0 auto; padding: 20px; }',
+            'h1 { color: #1a1a1a; border-bottom: 3px solid #4CAF50; padding-bottom: 10px; }',
+            'h2 { background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; padding: 12px 20px; border-radius: 8px; font-size: 18px; font-weight: bold; margin-top: 30px; box-shadow: 0 2px 4px rgba(0,0,0,0.1); }',
+            'h3 { color: #2c3e50; font-size: 16px; margin-top: 20px; }',
+            'p { margin: 10px 0; }',
+            'blockquote { border-left: 4px solid #4CAF50; margin: 10px 0; padding-left: 15px; color: #666; }',
+            'a { color: #4CAF50; text-decoration: none; }',
+            'a:hover { text-decoration: underline; }',
+            'hr { border: none; border-top: 1px solid #eee; margin: 20px 0; }',
+            '.score { color: #ff9800; font-weight: bold; }',
+            '</style></head><body>'
+        ]
+        
+        for line in lines:
+            line = line.strip()
+            if not line:
+                continue
+            
+            # H1
+            if line.startswith('# '):
+                text = line[2:]
+                html_lines.append(f'<h1>{text}</h1>')
+            # H2 - 分类标题
+            elif line.startswith('## '):
+                text = line[3:]
+                html_lines.append(f'<h2>📁 {text}</h2>')
+            # H3 - 新闻标题
+            elif line.startswith('### '):
+                text = line[4:]
+                html_lines.append(f'<h3>📰 {text}</h3>')
+            # 引用块
+            elif line.startswith('> '):
+                text = line[2:]
+                # 转换链接
+                text = re.sub(r'\[([^\]]+)\]\(([^)]+)\)', r'<a href="\2">\1</a>', text)
+                # 高亮分数
+                text = re.sub(r'⭐(\d+)', r'<span class="score">⭐\1</span>', text)
+                html_lines.append(f'<blockquote>{text}</blockquote>')
+            # 分隔线
+            elif line == '---':
+                html_lines.append('<hr>')
+            else:
+                html_lines.append(f'<p>{line}</p>')
+        
+        html_lines.append('</body></html>')
+        return '\n'.join(html_lines)
 
 
 def main():
