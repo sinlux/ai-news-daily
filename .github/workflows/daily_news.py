@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 AI新闻日报生成器 - GitHub Actions 版本
-使用 OpenAI API 替代本地 Ollama
+使用 DeepSeek API 翻译
 """
 
 import os
@@ -20,7 +20,7 @@ EMAIL_SENDER = "908827397@qq.com"
 EMAIL_PASSWORD = os.getenv("EMAIL_PASSWORD", "")  # 从环境变量读取
 EMAIL_RECEIVER = "market@sinluxlight.com"
 
-OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "")  # OpenAI API Key
+OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "")  # DeepSeek API Key
 USE_OPENAI = bool(OPENAI_API_KEY)
 
 MAX_ARTICLES_PER_CATEGORY = 5  # 每个分类最多5条
@@ -145,50 +145,80 @@ class ContentProcessor:
 
 class Summarizer:
     def summarize(self, title, content):
-        """使用 OpenAI API 或简单截断"""
-        if USE_OPENAI:
-            return self._openai_summarize(title, content)
-        else:
-            # 无API时使用简单处理
+        """强制使用 DeepSeek API 翻译"""
+        if not OPENAI_API_KEY:
+            print("     ⚠️ 警告: 未设置 API Key，无法翻译")
             return title, content[:100] + "..."
+        
+        result = self._deepseek_summarize(title, content)
+        # 如果翻译失败，重试一次
+        if result[0] == title:
+            print("     🔄 翻译失败，重试...")
+            result = self._deepseek_summarize(title, content)
+        return result
     
-    def _openai_summarize(self, title, content):
+    def _deepseek_summarize(self, title, content):
         try:
-            content = content[:1500] if content else title
-            prompt = f"""将以下英文AI新闻翻译成中文：
+            content_text = content[:1000] if content else title
+            prompt = f"""请将以下英文AI新闻翻译成中文。必须翻译标题和内容摘要。
 
-标题: {title}
-内容: {content}
+原文标题: {title}
+原文内容: {content_text}
 
-输出格式:
-中文标题: [翻译后的中文标题]
-摘要: [1-3句话中文摘要，简洁明了]"""
+请严格按照以下格式输出：
+中文标题: [这里写翻译后的中文标题]
+摘要: [这里写1-2句话的中文摘要]
+
+注意：中文标题和摘要都必须是中文。"""
 
             resp = requests.post(
-                "https://api.openai.com/v1/chat/completions",
-                headers={"Authorization": f"Bearer {OPENAI_API_KEY}"},
-                json={
-                    "model": "gpt-3.5-turbo",
-                    "messages": [{"role": "user", "content": prompt}],
-                    "temperature": 0.3
+                "https://api.deepseek.com/v1/chat/completions",
+                headers={
+                    "Authorization": f"Bearer {OPENAI_API_KEY}",
+                    "Content-Type": "application/json"
                 },
-                timeout=30
+                json={
+                    "model": "deepseek-chat",
+                    "messages": [{"role": "user", "content": prompt}],
+                    "temperature": 0.3,
+                    "max_tokens": 500
+                },
+                timeout=60
             )
+            
+            if resp.status_code != 200:
+                print(f"     ⚠️ API错误: {resp.status_code} - {resp.text[:200]}")
+                return title, content[:100] + "..."
+            
             result = resp.json()
+            if 'choices' not in result:
+                print(f"     ⚠️ API返回异常: {result}")
+                return title, content[:100] + "..."
+                
             text = result['choices'][0]['message']['content']
             
             # 解析
-            chinese_title = title
-            summary = content[:100]
+            chinese_title = ""
+            summary = ""
             for line in text.split('\n'):
-                if '中文标题:' in line or '中文标题：' in line:
+                line = line.strip()
+                if line.startswith('中文标题:') or line.startswith('中文标题：'):
                     chinese_title = line.split(':', 1)[-1].strip()
-                elif '摘要:' in line or '摘要：' in line:
+                elif line.startswith('摘要:') or line.startswith('摘要：'):
                     summary = line.split(':', 1)[-1].strip()
             
+            # 确保有中文内容
+            if not chinese_title or len(chinese_title) < 5:
+                chinese_title = title
+            
+            if not summary:
+                summary = content[:100] + "..."
+            
+            print(f"     ✓ 翻译成功")
             return chinese_title, summary
+            
         except Exception as e:
-            print(f"     ⚠️ API失败: {e}")
+            print(f"     ⚠️ 翻译异常: {e}")
             return title, content[:100] + "..."
 
 
