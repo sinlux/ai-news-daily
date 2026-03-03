@@ -32,7 +32,7 @@ jobs:
         EMAIL_PASSWORD: ${{ secrets.EMAIL_PASSWORD }}
         OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
       run: |
-        python ./daily_news.py
+        python .github/workflows/daily_news.py
 
     - name: Upload report
       uses: actions/upload-artifact@v4
